@@ -3,7 +3,7 @@ name: Vavoo Auto Update
 on:
   schedule:
     - cron: '0 * * * *' # Her saat başı otomatik çalışır
-  workflow_dispatch: # İstediğinde manuel başlatman için buton ekler
+  workflow_dispatch: # Manuel çalıştırma butonu
 
 jobs:
   build:
@@ -32,7 +32,7 @@ jobs:
           USER = "nookjoook56-web"
           REPO = "REPO"
           FILE = "playlist.m3u"
-          SOURCE = "https://raw.githubusercontent.com/nookjoook56-web/Repo/main/playlist.m3u"
+          SOURCE = "https://raw.githubusercontent.com/nookjoook56-web/REPO/main/playlist.m3u"
 
           def temizle(m):
               if not m: return "Kanal"
@@ -43,26 +43,38 @@ jobs:
           h = urllib3.PoolManager()
           headers = {"Authorization": f"token {TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
-          res = s.get(SOURCE, timeout=30)
-          ham = res.text.strip()
+          try:
+              # 1. Vavoo'dan imzalı anahtar al (sig)
+              auth_res = s.post("https://vavoo.to/api/box/ping2", data={"veo": "1"}).json()
+              sig = auth_res.get('signed', '')
+              
+              # 2. Kaynak veriyi çek
+              res = s.get(SOURCE, timeout=30)
+              ham = res.text.strip()
 
-          if "[{\"" in ham:
-              bas, son = ham.find('['), ham.rfind(']')
-              channels = json.loads(ham[bas:son+1])
-              out = ["#EXTM3U"]
-              for ch in channels:
-                  n, i = temizle(ch.get("name")), ch.get("id")
-                  out.append(f'#EXTINF:-1,{n}\nhttps://vavoo.to/play/{i}/index.m3u8')
-              final = "\n".join(out)
-          else:
-              final = f"#EXTM3U\n#EXTINF:-1, BILGI: {temizle(ham)}\nhttp://hata.url"
+              if "[{\"" in ham:
+                  bas, son = ham.find('['), ham.rfind(']')
+                  channels = json.loads(ham[bas:son+1])
+                  out = ["#EXTM3U"]
+                  for ch in channels:
+                      n, i = temizle(ch.get("name")), ch.get("id")
+                      # Linke imzayı ekliyoruz
+                      url = f"https://vavoo.to/play/{i}/index.m3u8?n=1&sig={sig}"
+                      out.append(f'#EXTINF:-1,{n}\n{url}')
+                  final = "\n".join(out)
+              else:
+                  final = f"#EXTM3U\n#EXTINF:-1, BILGI: Yayinlar Kapali veya Veri Bekleniyor\nhttp://hata.url"
 
-          api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
-          r_g = h.request('GET', api, headers=headers)
-          sha = json.loads(r_g.data.decode('utf-8')).get("sha") if r_g.status == 200 else None
-          
-          p = {"message": "Auto Update", "content": base64.b64encode(final.encode("utf-8")).decode("utf-8")}
-          if sha: p["sha"] = sha
-          
-          h.request('PUT', api, headers=headers, body=json.dumps(p).encode("utf-8"))
+              # 3. GitHub'a Geri Yükle
+              api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
+              r_g = h.request('GET', api, headers=headers)
+              sha = json.loads(r_g.data.decode('utf-8')).get("sha") if r_g.status == 200 else None
+              
+              p = {"message": "Sig Updated", "content": base64.b64encode(final.encode("utf-8")).decode("utf-8")}
+              if sha: p["sha"] = sha
+              
+              h.request('PUT', api, headers=headers, body=json.dumps(p).encode("utf-8"))
+          except Exception as e:
+              print(f"Hata: {e}")
           END
+          
