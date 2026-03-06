@@ -1,4 +1,4 @@
-name: Vavoo Final Fix
+name: Vavoo Sig Fix
 
 on:
   schedule:
@@ -31,10 +31,10 @@ jobs:
           USER = "nookjoook56-web"
           REPO = "Repo" 
           FILE = "playlist.m3u"
-          # KAYNAK: ARTIK KENDI DOSYANI DEGIL, DOGRUDAN VAVOO'YU OKUYORUZ
+          # KAYNAK: Artik kendi playlist.m3u dosyani okumuyoruz, dogrudan Vavoo'yu okuyoruz.
           VAVOO_API = "https://vavoo.to/channels"
 
-          def temizle(m):
+          def temiz(m):
               if not m: return "Kanal"
               n = unicodedata.normalize('NFKD', str(m))
               return "".join([c for c in n if not unicodedata.combining(c)]).encode('ascii', 'ignore').decode('ascii')
@@ -44,39 +44,39 @@ jobs:
           headers = {"Authorization": f"token {TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
           try:
-              # 1. Vavoo'dan taze imza (sig) al
-              auth_res = s.post("https://vavoo.to/api/box/ping2", data={"veo": "1"}).json()
-              sig = auth_res.get('signed', '')
+              # 1. Vavoo'dan taze imza (sig) anahtarı al
+              auth = s.post("https://vavoo.to/api/box/ping2", data={"veo": "1"}).json()
+              sig = auth.get('signed', '')
               
-              # 2. Güncel kanal listesini çek
+              # 2. Vavoo'dan temiz listeyi çek
               res = s.get(VAVOO_API, timeout=30)
               channels = res.json()
               
               out = ["#EXTM3U"]
               for ch in channels:
-                  n = temizle(ch.get("name"))
-                  i = ch.get("id")
-                  group = temizle(ch.get("country", "Genel"))
-                  # Imzalı link oluşturma
-                  url = f"https://vavoo.to/play/{i}/index.m3u8?n=1&sig={sig}"
-                  out.append(f'#EXTINF:-1 group-title="{group}",{n}\n{url}')
+                  name = temiz(ch.get("name"))
+                  cid = ch.get("id")
+                  grp = temiz(ch.get("country", "Genel"))
+                  # Linke 'sig' parametresini ekliyoruz
+                  url = f"https://vavoo.to/play/{cid}/index.m3u8?n=1&sig={sig}"
+                  out.append(f'#EXTINF:-1 group-title="{grp}",{name}\n{url}')
               
-              final_content = "\n".join(out)
+              final = "\n".join(out)
               
-              # 3. GitHub SHA al ve üzerine tertemiz yaz
-              api_url = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
-              r_get = h.request('GET', api_url, headers=headers)
-              sha = json.loads(r_get.data.decode('utf-8')).get("sha") if r_get.status == 200 else None
+              # 3. GitHub'daki bozuk dosyayı tamamen sıfırla ve yeni içeriği yaz
+              api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
+              r_g = h.request('GET', api, headers=headers)
+              sha = json.loads(r_g.data.decode('utf-8')).get("sha") if r_g.status == 200 else None
               
               payload = {
-                  "message": "Full Sync with Sig",
-                  "content": base64.b64encode(final_content.encode("utf-8")).decode("utf-8")
+                  "message": "Full Reset & Signed Update",
+                  "content": base64.b64encode(final.encode("utf-8")).decode("utf-8")
               }
               if sha: payload["sha"] = sha
               
-              h.request('PUT', api_url, headers=headers, body=json.dumps(payload).encode("utf-8"))
-              print("Basarili!")
-
+              r_p = h.request('PUT', api, headers=headers, body=json.dumps(payload).encode("utf-8"))
+              if r_p.status in [200, 201]:
+                  print("BASARILI: Imzali linkler eklendi ve liste temizlendi.")
           except Exception as e:
               print(f"Hata: {e}")
           END
