@@ -1,80 +1,55 @@
-name: Vavoo Auto Update
+import cloudscraper, urllib3, base64, json, unicodedata, os
 
-on:
-  schedule:
-    - cron: '0 * * * *' # Her saat başı otomatik çalışır
-  workflow_dispatch: # Manuel çalıştırma butonu
+TOKEN = os.getenv('MY_TOKEN')
+USER = "nookjoook56-web"
+REPO = "Repo" # Büyük/küçük harfe dikkat: Görüntüde 'Repo'
+FILE = "playlist.m3u"
+# KAYNAK OLARAK DOGRUDAN VAVOO API KULLANIYORUZ (Kendi dosyani degil!)
+VAVOO_API = "https://vavoo.to/channels"
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+def temizle(m):
+    if not m: return "Kanal"
+    n = unicodedata.normalize('NFKD', str(m))
+    return "".join([c for c in n if not unicodedata.combining(c)]).encode('ascii', 'ignore').decode('ascii')
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+s = cloudscraper.create_scraper()
+h = urllib3.PoolManager()
+headers = {"Authorization": f"token {TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
-      - name: Install dependencies
-        run: |
-          pip install cloudscraper urllib3
+try:
+    # 1. Vavoo'dan taze imza al
+    auth_res = s.post("https://vavoo.to/api/box/ping2", data={"veo": "1"}).json()
+    sig = auth_res.get('signed', '')
+    
+    # 2. Dogrudan Vavoo API'den güncel kanal listesini cek
+    res = s.get(VAVOO_API, timeout=30)
+    channels = res.json()
+    
+    out = ["#EXTM3U"]
+    for ch in channels:
+        n = temizle(ch.get("name"))
+        i = ch.get("id")
+        group = temizle(ch.get("country", "Genel"))
+        # Linke imzayi ekliyoruz
+        url = f"https://vavoo.to/play/{i}/index.m3u8?n=1&sig={sig}"
+        out.append(f'#EXTINF:-1 group-title="{group}",{n}\n{url}')
+    
+    final_content = "\n".join(out)
+    
+    # 3. GitHub SHA al ve üzerine yaz (Döngüye girmemesi icin temiz içerik)
+    api_url = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
+    r_get = h.request('GET', api_url, headers=headers)
+    sha = json.loads(r_get.data.decode('utf-8')).get("sha") if r_get.status == 200 else None
+    
+    payload = {
+        "message": "Full Sync with Sig",
+        "content": base64.b64encode(final_content.encode("utf-8")).decode("utf-8")
+    }
+    if sha: payload["sha"] = sha
+    
+    h.request('PUT', api_url, headers=headers, body=json.dumps(payload).encode("utf-8"))
+    print("Islem Basarili: Liste sifirlandi ve imzali linkler eklendi.")
 
-      - name: Run Update Script
-        env:
-          MY_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
-        run: |
-          python << END
-          import cloudscraper, urllib3, base64, json, unicodedata, os
-          
-          TOKEN = os.getenv('MY_TOKEN')
-          USER = "nookjoook56-web"
-          REPO = "REPO"
-          FILE = "playlist.m3u"
-          SOURCE = "https://raw.githubusercontent.com/nookjoook56-web/REPO/main/playlist.m3u"
-
-          def temizle(m):
-              if not m: return "Kanal"
-              n = unicodedata.normalize('NFKD', str(m))
-              return "".join([c for c in n if not unicodedata.combining(c)]).encode('ascii', 'ignore').decode('ascii')
-
-          s = cloudscraper.create_scraper()
-          h = urllib3.PoolManager()
-          headers = {"Authorization": f"token {TOKEN}", "Accept": "application/vnd.github.v3+json"}
-
-          try:
-              # 1. Vavoo'dan imzalı anahtar al (sig)
-              auth_res = s.post("https://vavoo.to/api/box/ping2", data={"veo": "1"}).json()
-              sig = auth_res.get('signed', '')
-              
-              # 2. Kaynak veriyi çek
-              res = s.get(SOURCE, timeout=30)
-              ham = res.text.strip()
-
-              if "[{\"" in ham:
-                  bas, son = ham.find('['), ham.rfind(']')
-                  channels = json.loads(ham[bas:son+1])
-                  out = ["#EXTM3U"]
-                  for ch in channels:
-                      n, i = temizle(ch.get("name")), ch.get("id")
-                      # Linke imzayı ekliyoruz
-                      url = f"https://vavoo.to/play/{i}/index.m3u8?n=1&sig={sig}"
-                      out.append(f'#EXTINF:-1,{n}\n{url}')
-                  final = "\n".join(out)
-              else:
-                  final = f"#EXTM3U\n#EXTINF:-1, BILGI: Yayinlar Kapali veya Veri Bekleniyor\nhttp://hata.url"
-
-              # 3. GitHub'a Geri Yükle
-              api = f"https://api.github.com/repos/{USER}/{REPO}/contents/{FILE}"
-              r_g = h.request('GET', api, headers=headers)
-              sha = json.loads(r_g.data.decode('utf-8')).get("sha") if r_g.status == 200 else None
-              
-              p = {"message": "Sig Updated", "content": base64.b64encode(final.encode("utf-8")).decode("utf-8")}
-              if sha: p["sha"] = sha
-              
-              h.request('PUT', api, headers=headers, body=json.dumps(p).encode("utf-8"))
-          except Exception as e:
-              print(f"Hata: {e}")
-          END
-          
+except Exception as e:
+    print(f"Hata: {e}")
+    
